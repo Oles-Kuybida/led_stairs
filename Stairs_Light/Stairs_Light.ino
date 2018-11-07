@@ -98,16 +98,16 @@ void printOnDisplay(String text, int number = -1)
   display.drawPixel(127, 0, WHITE);
   display.drawPixel(0, 31, WHITE);
   display.drawPixel(127, 31, WHITE);
-
-  display.setTextSize(1);
-  display.setTextColor(WHITE);
-  display.setCursor(27, 5);
-  display.print(text);
-  if (number != -1)
-  {
-    display.setCursor(27, 15);
-    display.print(number);
-  }
+//
+//  display.setTextSize(1);
+//  display.setTextColor(WHITE);
+//  display.setCursor(27, 5);
+//  display.print(text);
+//  if (number != -1)
+//  {
+//    display.setCursor(27, 15);
+//    display.print(number);
+//  }
 
   display.display();
 }
@@ -156,6 +156,34 @@ void loop()
   bool isPLUSpressed = (digitalRead(PLUS_BTN_PIN) == HIGH);
   bool isMINUSpressed = (digitalRead(MINUS_BTN_PIN) == HIGH);
   printOnDisplay("Hello, world!", isMODEpressed);
+
+  display.setTextSize(1);
+  display.setTextColor(WHITE);
+  if (isTESTpressed)
+  {
+    display.setCursor(5, 5);
+    display.print("T");
+  }
+
+  if (isMODEpressed)
+  {
+    display.setCursor(15, 5);
+    display.print("M");
+  }
+
+  if (isPLUSpressed)
+  {
+    display.setCursor(25, 5);
+    display.print("+");
+  }
+  if (isMINUSpressed)
+  {
+    display.setCursor(35, 5);
+    display.print("-");
+  }
+  display.display();
+
+
   return;
   //###################### MODE DETERMINATION
   //TEST MODE DETECT
