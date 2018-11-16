@@ -2,6 +2,7 @@
 #include <Wire.h>
 #include <Adafruit_SSD1306.h>
 #include <Adafruit_GFX.h>
+#include <EEPROM.h>
 
 #define delayTime 20
 #define settinDelay 2000
@@ -87,7 +88,7 @@ void printOnDisplay(String text, int number = -1)
   display.print(text);
   if (number != -1)
   {
-    display.setCursor(27, 15);
+    display.setCursor(27, 20);
     display.print(number);
   }
 
@@ -115,6 +116,8 @@ void setup()
   pinMode(MODE_BTN_PIN, INPUT);
   pinMode(PLUS_BTN_PIN, INPUT);
   pinMode(MINUS_BTN_PIN, INPUT);
+
+   //ReadSetting();
 }
 
 void loop()
@@ -155,7 +158,11 @@ void loop()
   //TEST MODE DETECT
   if (isTESTpressed)
   {
-    changeModeTo(TEST_MODE);
+    if (MODE == TEST_MODE)
+      changeModeTo(WAITING_MODE);
+    else
+      changeModeTo(TEST_MODE);
+    delay(300);
   }
   else
   {
@@ -171,8 +178,42 @@ void loop()
         newMode = 0;
 
       changeModeTo(newMode);
-      //valideteSetting();
+      delay(300);
     }
+    int settingArg = 0;
+    if (isPLUSpressed)
+    {
+      settingArg = 1;
+      delay(300);
+    }
+    if (isMINUSpressed)
+    {
+      settingArg = -1;
+      delay(300);
+    }
+    if (settingArg != 0)
+    {
+      switch (MODE)
+      {
+        case SETTING_ITEM_COUNT:
+          ITEM_COUNT += settingArg;
+          brightWait();
+          break;
+        case SETTING_STEP_DURATION:
+          STEP_DURATION += settingArg;
+          break;
+        case SETTING_MAX_BRIGHT:
+          MAX_BRIGHT += settingArg;
+          break;
+        case SETTING_WAIT_BRIGHT:
+          WAIT_BRIGHT += settingArg;
+          brightWait();
+          break;
+      }
+      valideteSetting();
+    }
+    
+
     if ( (MODE == WAITING_MODE) || (MODE == GO_MODE) )
     {
       if (isThereDayLight())
@@ -181,11 +222,19 @@ void loop()
       }
       else
       {
-        updateSonicDataUp();
-        updateSonicDataDw();
-        UP_SONIC_DIST = 1; //TODO:
-        DW_SONIC_DIST = 45; //TODO:
+        if (!isGoUp)
+          updateSonicDataUp();
+        if (!isGoDw)
+          updateSonicDataDw();
+        //UP_SONIC_DIST = 1; //TODO:
+        //DW_SONIC_DIST = 45; //TODO:
         //if no sonic
+        //reset error
+        if ((UP_SONIC_DIST != 0) && (DW_SONIC_DIST != 0))
+        {
+          String errorText = "no error";
+          int errorCode = 0;
+        }
         if (UP_SONIC_DIST == 0)
         {
           errorCode = 1;
@@ -267,6 +316,8 @@ bool valideteSetting()
     WAIT_BRIGHT = 1;
   if (WAIT_BRIGHT > 255)
     WAIT_BRIGHT = 255;
+
+   // SaveSetting();
 }
 
 bool isThereDayLight()
@@ -300,9 +351,9 @@ void updateSonicDataUp()
 
   duration = pulseIn(UP_SONIC_ECHO_PIN , HIGH);
   UP_SONIC_DIST = (duration * .0343) / 2;
-
-  Serial.print("Distance up: ");
-  Serial.println(UP_SONIC_DIST );
+  //
+  //  Serial.print("Distance up: ");
+  //  Serial.println(UP_SONIC_DIST );
 }
 
 void updateSonicDataDw()
@@ -318,8 +369,8 @@ void updateSonicDataDw()
   duration = pulseIn(DW_SONIC_ECHO_PIN , HIGH);
   DW_SONIC_DIST = (duration * .0343) / 2; //meter
 
-  Serial.print("Distance dw: ");
-  Serial.print(DW_SONIC_DIST );
+  //  Serial.print("Distance dw: ");
+  //  Serial.print(DW_SONIC_DIST );
 }
 
 void displayData()
@@ -327,6 +378,8 @@ void displayData()
   if (errorCode != 0)
   {
     printOnDisplay(errorText);
+    Serial.print("Error");
+    shutDownAllPins();
     return;
   }
   switch (MODE)
@@ -357,16 +410,16 @@ void displayData()
       }
       break;
     case SETTING_ITEM_COUNT:
-      printOnDisplay("Setting ITEM COUNT");
+      printOnDisplay("Setting \nITEM COUNT", ITEM_COUNT);
       break;
     case SETTING_STEP_DURATION:
-      printOnDisplay("Setting STEP DURATION");
+      printOnDisplay("Setting \nSTEP DURATION", STEP_DURATION);
       break;
     case SETTING_MAX_BRIGHT:
-      printOnDisplay("Setting MAX BRIGHT");
+      printOnDisplay("Setting \nMAX BRIGHT", MAX_BRIGHT);
       break;
     case SETTING_WAIT_BRIGHT:
-      printOnDisplay("Setting WAIT BRIGHT");
+      printOnDisplay("Setting \nWAIT BRIGHT", WAIT_BRIGHT);
       break;
     case SLEEP_MODE:
       printOnDisplay("Sleep");
@@ -432,4 +485,20 @@ void shutDownAllPins()
   for (int i = 0; i < MAX_ITEM_COUNT; ++i)
     leds[i] = CRGB(0, 0, 0);
   //need to show() for apply
+}
+
+void SaveSetting()
+{
+  EEPROM.write(10, ITEM_COUNT);
+  EEPROM.write(20, STEP_DURATION);
+  EEPROM.write(30, MAX_BRIGHT);
+  EEPROM.write(40, WAIT_BRIGHT);
+}
+
+void ReadSetting()
+{
+  ITEM_COUNT = EEPROM.read(10);
+  STEP_DURATION = EEPROM.read(20);
+  MAX_BRIGHT = EEPROM.read(30);
+  WAIT_BRIGHT = EEPROM.read(40);
 }
