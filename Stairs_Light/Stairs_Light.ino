@@ -1,31 +1,42 @@
 #include "FastLED.h"
 #include <Wire.h>
-#include <Adafruit_SSD1306.h>
-#include <Adafruit_GFX.h>
 #include <EEPROM.h>
+#include <SoftwareSerial.h>
+#include <NewPing.h>
+
+//pins
+#define rxPin 2 // Wire this to Tx Pin of ESP8266
+#define txPin 3 // Wire this to Rx Pin of ESP8266
+
+//day light sensor
+#define LIGHT_REGISTOR_PIN 5
+boolean IS_DAY_LIGHT;
+
+#define LED_DATA_PIN 6
+
+//sonic_0
+#define SONIC_TRIG_PIN 7
+#define SONIC_ECHO_PIN 8
+#define MAX_DISTANCE 500
+int UP_S_TRIGGER = 2; //cm    //up sonic trigger dist
+NewPing sonar(SONIC_TRIG_PIN, SONIC_ECHO_PIN, MAX_DISTANCE);
+int SONIC_DIST;
+
+//sonic_1 or ir
+//#define SONIC_TRIG_PIN 9
+//#define SONIC_ECHO_PIN 10
+#define IR_SENSOR_PIN 9
+boolean IS_IR_MOVE;
 
 #define delayTime 20
 #define settinDelay 2000
-//pins
-#define TEST_BTN_PIN 4
-#define MODE_BTN_PIN 5
-#define PLUS_BTN_PIN 2
-#define MINUS_BTN_PIN 3
 
-#define LIGHT_REGISTOR_PIN A1
+int ITEM_COUNT = 15; //stair count
+int ON_ITEM_COUNT = 15;
 
-#define UP_SONIC_TRIG_PIN 9
-#define UP_SONIC_ECHO_PIN 10
-
-#define DW_SONIC_TRIG_PIN 11
-#define DW_SONIC_ECHO_PIN 12
-
-int ITEM_COUNT = 10;
 long STEP_DURATION = 500;//(miliseconds per step)
 int MAX_BRIGHT = 255;//0-255
 int WAIT_BRIGHT = 1;//0-255
-
-#define LED_DATA_PIN 8
 
 //modes
 #define TEST_MODE 10
@@ -49,21 +60,9 @@ long timerUp = 0;
 long timerDw = 0;
 long timerSett = 0;
 
-int UP_SONIC_DIST;    //up
-int DW_SONIC_DIST;   //down
-
-//settings
-int UP_S_TRIGGER = 10; //cm    //up sonic trigger dist
-int DW_S_TRIGGER = 10; //cm   //down  sonic trigger dist
-
-#define MAX_ITEM_COUNT 50
+#define MAX_ITEM_COUNT 346
 CRGB leds[MAX_ITEM_COUNT ];//max count
-
-// OLED display TWI address
-#define OLED_ADDR   0x3C
-
-// reset pin not used on 4-pin OLED module
-Adafruit_SSD1306 display(-1);  // -1 = no reset pin
+int stair[MAX_ITEM_COUNT];
 
 bool isGoUp = false;
 bool isGoDw = false;
@@ -73,198 +72,185 @@ int softLightPersent = 30;
 String errorText = "no error";
 int errorCode = 0;
 
-void printOnDisplay(String text, int number = -1)
+SoftwareSerial ESP8266 (rxPin, txPin);
+
+typedef struct record Stair;
+
+//////////////////////////////////////////////////////////////////////////////////////////////////////////
+String sendATcomand(String cmd, int delayT = 200, boolean debug = false)
 {
-  display.clearDisplay();
+  String response = "";
+  response = "NO RESPONSE";
+  ESP8266.println(cmd);
+  Serial.println(cmd);
 
-  display.drawPixel(0, 0, WHITE);
-  display.drawPixel(127, 0, WHITE);
-  display.drawPixel(0, 31, WHITE);
-  display.drawPixel(127, 31, WHITE);
-
-  display.setTextSize(1);
-  display.setTextColor(WHITE);
-  display.setCursor(27, 5);
-  display.print(text);
-  if (number != -1)
-  {
-    display.setCursor(27, 20);
-    display.print(number);
+  delay(delayT);
+  while (ESP8266.available()) {
+    response = ESP8266.readStringUntil('\n');
   }
+  if (debug)
+  {
+    String finalStr = "Got reponse from ESP8266: " + response;
+    Serial.println(finalStr);
+  }
+  return response;
+}
 
-  display.display();
+void initESP()
+{
+  ESP8266.begin(115200);
+  ESP8266.println("AT+RST");
+
+  delay(1000);
+
+  if (ESP8266.find("OK") ) Serial.println("Module Reset");
+
+  Serial.println("ESP READY");
+
+  // set the data rate for the SoftwareSerial port
+  sendATcomand("AT+RST", 2000, true);  //reset
+  //sendATcomand("AT", 2000, true);  //test
+
+  sendATcomand("AT+CWMODE=3", 1000, true); //mode station
+  //sendATcomand("AT+CWLAP", 4000, true);
+  sendATcomand("AT+CWJAP=\"Owl_x_2G\",\"owl{}123\"", 2000, true); //connect to Wi Fi AP
+  sendATcomand("AT+CWMODE=1", 1000, true); //mode station
+  sendATcomand("AT+CIPMUX=1", 1000, true); //mode station
+  sendATcomand("AT+CIFSR", 5000, true); // get ip address
+  sendATcomand("AT+CIPSERVER=1,80", 1000, true); // turn on server on port 80
+}
+
+void updateSensorDataSonicOrIrUp()
+{
+  //Sonic
+  SONIC_DIST = sonar.ping_cm();
+  //  Serial.print("Distance up: ");
+  //  Serial.print(SONIC_DIST );
+
+  if (SONIC_DIST != 0)
+  {
+    errorText = "no error";
+    errorCode = 0;
+  }
+}
+
+void updateSensorDataSonicOrIrDw()
+{
+  IS_IR_MOVE = LOW;//digitalRead(IR_SENSOR_PIN);
+  //  Serial.print("Ir sensor up: ");
+  //  Serial.print(IS_IR_MOVE );
 }
 
 void setup()
 {
+  //  stair[0] = 24;
+  //  stair[1] = 23;
+  //  stair[2] = 23;
+  //  stair[3] = 23;
+  //  stair[4] = 23;
+  //  stair[5] = 23;
+  //  stair[6] = 23;
+  //  stair[7] = 23;
+  //  stair[8] = 23;
+  //  stair[9] = 23;
+  //  stair[10] = 23;
+  //  stair[11] = 23;
+  //  stair[12] = 23;
+  //  stair[13] = 23;
+  //  stair[14] = 23;
+  //  stair[15] = 23;
+  stair[0] = 2;
+  stair[1] = 1;
+  stair[2] = 1;
+  stair[3] = 1;
+  stair[4] = 1;
+  stair[5] = 1;
+  stair[6] = 1;
+  stair[7] = 1;
+  stair[8] = 1;
+  stair[9] = 1;
+  stair[10] = 1;
+  stair[11] = 1;
+  stair[12] = 1;
+  stair[13] = 1;
+  stair[14] = 1;
+  stair[15] = 2;
+
+  Serial.println("Setup");
   Serial.begin(9600);
+
+  Serial.println("esp");
+  //initESP();
+  Serial.println("esp ready");
   //led
   FastLED.addLeds<NEOPIXEL, LED_DATA_PIN>(leds, MAX_ITEM_COUNT );
-  //disp
-  // initialize and clear display
-  display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR);
-  display.clearDisplay();
-  display.display();
 
+  //
+  pinMode(IR_SENSOR_PIN , INPUT);
   //sonic
-  pinMode(UP_SONIC_TRIG_PIN , OUTPUT);
-  pinMode(UP_SONIC_ECHO_PIN , INPUT);
-  pinMode(DW_SONIC_TRIG_PIN , OUTPUT);
-  pinMode(DW_SONIC_ECHO_PIN , INPUT);
-  //Buttons
-  pinMode(TEST_BTN_PIN, INPUT);
-  pinMode(MODE_BTN_PIN, INPUT);
-  pinMode(PLUS_BTN_PIN, INPUT);
-  pinMode(MINUS_BTN_PIN, INPUT);
+  pinMode(SONIC_TRIG_PIN , OUTPUT);
+  pinMode(SONIC_ECHO_PIN , INPUT);
 
-   //ReadSetting();
+  pinMode(LIGHT_REGISTOR_PIN, INPUT);
+
+  Serial.println("Setup ready");
+  //ReadSetting();
 }
 
 void loop()
 {
-  bool isTESTpressed = (digitalRead(TEST_BTN_PIN) == HIGH);
-  bool isMODEpressed = (digitalRead(MODE_BTN_PIN) == HIGH);
-  bool isPLUSpressed = (digitalRead(PLUS_BTN_PIN) == HIGH);
-  bool isMINUSpressed = (digitalRead(MINUS_BTN_PIN) == HIGH);
-  //printOnDisplay("Hello, world!", isMODEpressed);
-
-  //  display.setTextSize(1);
-  //  display.setTextColor(WHITE);
-  //  if (isTESTpressed)
-  //  {
-  //    display.setCursor(5, 5);
-  //    display.print("T");
-  //  }
-  //
-  //  if (isMODEpressed)
-  //  {
-  //    display.setCursor(15, 5);
-  //    display.print("M");
-  //  }
-  //
-  //  if (isPLUSpressed)
-  //  {
-  //    display.setCursor(25, 5);
-  //    display.print("+");
-  //  }
-  //  if (isMINUSpressed)
-  //  {
-  //    display.setCursor(35, 5);
-  //    display.print("-");
-  //  }
-  //  display.display();
-
-  //###################### MODE DETERMINATION
-  //TEST MODE DETECT
-  if (isTESTpressed)
+  errorText = "no init";
+  errorCode = 0;
+  if (isThereDayLight())
   {
-    if (MODE == TEST_MODE)
-      changeModeTo(WAITING_MODE);
-    else
-      changeModeTo(TEST_MODE);
-    delay(300);
+    changeModeTo(SLEEP_MODE);
   }
   else
   {
-    //SETTING MODE DETECT
-    if (isMODEpressed)
+    if (MODE == SLEEP_MODE)
     {
-      int newMode;
-      if ((MODE < 0) || (MODE > 5))
-        newMode = 0;
-      else
-        newMode = MODE + 1;
-      if (newMode > 5)
-        newMode = 0;
-
-      changeModeTo(newMode);
-      delay(300);
+      changeModeTo(WAITING_MODE);
+      isGoUp =  false;
+      isGoDw =  false;
     }
-    int settingArg = 0;
-    if (isPLUSpressed)
-    {
-      settingArg = 1;
-      delay(300);
-    }
-    if (isMINUSpressed)
-    {
-      settingArg = -1;
-      delay(300);
-    }
-    if (settingArg != 0)
-    {
-      switch (MODE)
-      {
-        case SETTING_ITEM_COUNT:
-          ITEM_COUNT += settingArg;
-          brightWait();
-          break;
-        case SETTING_STEP_DURATION:
-          STEP_DURATION += settingArg;
-          break;
-        case SETTING_MAX_BRIGHT:
-          MAX_BRIGHT += settingArg;
-          break;
-        case SETTING_WAIT_BRIGHT:
-          WAIT_BRIGHT += settingArg;
-          brightWait();
-          break;
-      }
-      valideteSetting();
-    }
-    
-
+  }
+  bool isTESTpressed = false;
+  bool isMODEpressed = false;
+  //###################### MODE DETERMINATION
+  {
     if ( (MODE == WAITING_MODE) || (MODE == GO_MODE) )
     {
-      if (isThereDayLight())
+      if (!isGoUp)
+        updateSensorDataSonicOrIrUp();
+
+      if (!isGoDw)
+        updateSensorDataSonicOrIrDw();
+
+      if (SONIC_DIST == 0)
       {
-        changeModeTo(SLEEP_MODE);
+        errorText = "NoUpSonic";
+        errorCode = 1;
+        isGoUp = false;
       }
-      else
+      if (errorCode == 0)
       {
         if (!isGoUp)
-          updateSonicDataUp();
+        {
+          isGoUp = SONIC_DIST <= UP_S_TRIGGER;
+        }
         if (!isGoDw)
-          updateSonicDataDw();
-        //UP_SONIC_DIST = 1; //TODO:
-        //DW_SONIC_DIST = 45; //TODO:
-        //if no sonic
-        //reset error
-        if ((UP_SONIC_DIST != 0) && (DW_SONIC_DIST != 0))
         {
-          String errorText = "no error";
-          int errorCode = 0;
+          isGoDw = (IS_IR_MOVE == HIGH);
         }
-        if (UP_SONIC_DIST == 0)
+      }
+      if (MODE != GO_MODE)
+      {
+        if ( isGoUp || isGoDw )
         {
-          errorCode = 1;
-          errorText = "NoUpSonic";
+          changeModeTo(GO_MODE);
         }
-        if (DW_SONIC_DIST == 0)
-        {
-          errorCode = 2;
-          errorText = "NoDownSonic";
-        }
-        if (errorCode == 0)
-        {
-          if (!isGoUp)
-          {
-            isGoUp = UP_SONIC_DIST <= UP_S_TRIGGER;
-          }
-          if (!isGoDw)
-          {
-            isGoDw = DW_SONIC_DIST <= DW_S_TRIGGER;
-          }
-        }
-        if (MODE != GO_MODE)
-        {
-          if ( isGoUp || isGoDw )
-          {
-            changeModeTo(GO_MODE);
-          }
-          else
-            changeModeTo(WAITING_MODE);
-        }
+        else
+          changeModeTo(WAITING_MODE);
       }
     }
   }
@@ -279,7 +265,7 @@ void loop()
     timerUp += delayTime;
   if (isGoDw)
     timerDw += delayTime;
-  const long fullTime = ITEM_COUNT * STEP_DURATION;
+  const long fullTime = (ITEM_COUNT * STEP_DURATION) + (ON_ITEM_COUNT * STEP_DURATION);
 
   if ((timerUp >= fullTime) || !isGoUp)
   {
@@ -317,17 +303,18 @@ bool valideteSetting()
   if (WAIT_BRIGHT > 255)
     WAIT_BRIGHT = 255;
 
-   // SaveSetting();
+  // SaveSetting();
 }
 
-bool isThereDayLight()
+boolean isThereDayLight()
 {
-  return false;
   //check light sensor if is day or night now
-  Serial.println(analogRead(LIGHT_REGISTOR_PIN));
-  if (analogRead(LIGHT_REGISTOR_PIN) < 500)
+  int dayLight = digitalRead(LIGHT_REGISTOR_PIN);
+  Serial.print("");
+  IS_DAY_LIGHT = dayLight;
+  if (dayLight)
     return false;
-  return true;//for debug/ must be true
+  return true;
 }
 
 void changeModeTo(int mode)
@@ -339,90 +326,38 @@ void changeModeTo(int mode)
   Serial.println(MODE);
 }
 
-void updateSonicDataUp()
-{
-  //update Up sonic data
-  long duration;
-  digitalWrite(UP_SONIC_TRIG_PIN , LOW);
-  delayMicroseconds(2);
-  digitalWrite(UP_SONIC_TRIG_PIN , HIGH);
-  delayMicroseconds(10);
-  digitalWrite(UP_SONIC_TRIG_PIN , LOW);
-
-  duration = pulseIn(UP_SONIC_ECHO_PIN , HIGH);
-  UP_SONIC_DIST = (duration * .0343) / 2;
-  //
-  //  Serial.print("Distance up: ");
-  //  Serial.println(UP_SONIC_DIST );
-}
-
-void updateSonicDataDw()
-{
-  //update Down sonic data
-  long duration;
-  digitalWrite(DW_SONIC_TRIG_PIN , LOW);
-  delayMicroseconds(2);
-  digitalWrite(DW_SONIC_TRIG_PIN , HIGH);
-  delayMicroseconds(10);
-  digitalWrite(DW_SONIC_TRIG_PIN , LOW);
-
-  duration = pulseIn(DW_SONIC_ECHO_PIN , HIGH);
-  DW_SONIC_DIST = (duration * .0343) / 2; //meter
-
-  //  Serial.print("Distance dw: ");
-  //  Serial.print(DW_SONIC_DIST );
-}
-
 void displayData()
 {
   if (errorCode != 0)
   {
-    printOnDisplay(errorText);
-    Serial.print("Error");
+    Serial.print("Error ");
+    Serial.print(errorCode);
+    Serial.println(errorText);
     shutDownAllPins();
     return;
   }
   switch (MODE)
   {
     case WAITING_MODE:
-      printOnDisplay("Wait for move");
       brightWait();
       break;
     case TEST_MODE:
-      printOnDisplay("Test mode");
       brightAll();
       break;
     case GO_MODE:
       {
-        int sec = 0;
-        if (isGoUp)
-          sec = timerUp / 1000;
-        else
-          sec = timerDw / 1000;
-        int sec0 = sec % 10;
-        int sec1 = (sec - sec0) % 100;
-        printOnDisplay("GO!!", sec);
-        //disp.displayByte(0, _G);
-        // disp.displayByte(1, _O);
-        // disp.display(2, sec1);//timer(reg0)
-        // disp.display(3, sec0);//timer(reg1)
         bright();
       }
       break;
     case SETTING_ITEM_COUNT:
-      printOnDisplay("Setting \nITEM COUNT", ITEM_COUNT);
       break;
     case SETTING_STEP_DURATION:
-      printOnDisplay("Setting \nSTEP DURATION", STEP_DURATION);
       break;
     case SETTING_MAX_BRIGHT:
-      printOnDisplay("Setting \nMAX BRIGHT", MAX_BRIGHT);
       break;
     case SETTING_WAIT_BRIGHT:
-      printOnDisplay("Setting \nWAIT BRIGHT", WAIT_BRIGHT);
       break;
     case SLEEP_MODE:
-      printOnDisplay("Sleep");
       shutDownAllPins();
       FastLED.show();
       break;
@@ -433,15 +368,15 @@ void brightAll()
 {
   shutDownAllPins();
   for (int i = 0; i < ITEM_COUNT; ++i)
-    leds[i] = CRGB(MAX_BRIGHT, MAX_BRIGHT, MAX_BRIGHT);
+    stairOn(i, CRGB(MAX_BRIGHT, MAX_BRIGHT, MAX_BRIGHT));
   FastLED.show();
 }
 
 void brightWait()
 {
   shutDownAllPins();
-  leds[0] =             CRGB(WAIT_BRIGHT, WAIT_BRIGHT, WAIT_BRIGHT);
-  leds[ITEM_COUNT - 1] = CRGB(WAIT_BRIGHT, WAIT_BRIGHT, WAIT_BRIGHT);
+  stairOn(0, CRGB(WAIT_BRIGHT, WAIT_BRIGHT, WAIT_BRIGHT));
+  stairOn(ITEM_COUNT - 1, CRGB(WAIT_BRIGHT, WAIT_BRIGHT, WAIT_BRIGHT));
   FastLED.show();
 }
 
@@ -464,18 +399,38 @@ CRGB softLight(long startT, long duration, long currT, int MAX, bool on = true, 
 void bright()
 {
   int index = 1;//time setting const
+  CRGB colrmax = CRGB(MAX_BRIGHT, MAX_BRIGHT, MAX_BRIGHT);
   shutDownAllPins();
   if (isGoUp)
   {
     int _stepUp = timerUp / (STEP_DURATION * index);
-    if (_stepUp < ITEM_COUNT)
-      leds[_stepUp] = softLight(_stepUp * STEP_DURATION * index, (STEP_DURATION * index), timerUp, MAX_BRIGHT);
+    if (_stepUp < ITEM_COUNT + ON_ITEM_COUNT)
+    {
+      CRGB c = softLight(_stepUp * STEP_DURATION * index, (STEP_DURATION * index), timerUp, MAX_BRIGHT);
+      for (int j = 0; j < ON_ITEM_COUNT; ++j)
+      {
+        int currentStep = _stepUp - j;
+        if (currentStep >= ITEM_COUNT)
+          continue;
+        if (j == 0)
+          stairOn(currentStep, c);
+        else
+          stairOn(currentStep, colrmax);
+      }
+      //      Serial.print("stair up ");
+      //      Serial.println(_stepUp);
+    }
   }
   if (isGoDw)
   {
     int _stepDw = ITEM_COUNT - 1 - timerDw / (STEP_DURATION * index);
     if (_stepDw < ITEM_COUNT)
-      leds[_stepDw] = softLight(timerDw / (STEP_DURATION * index) * STEP_DURATION * index, (STEP_DURATION * index), timerDw, MAX_BRIGHT);
+    {
+      CRGB c = softLight(timerDw / (STEP_DURATION * index) * STEP_DURATION * index, (STEP_DURATION * index), timerDw, MAX_BRIGHT);
+      stairOn(_stepDw, c);
+      //      Serial.print("stair dw ");
+      //      Serial.println(_stepDw);
+    }
   }
   FastLED.show();
 }
@@ -501,4 +456,17 @@ void ReadSetting()
   STEP_DURATION = EEPROM.read(20);
   MAX_BRIGHT = EEPROM.read(30);
   WAIT_BRIGHT = EEPROM.read(40);
+}
+
+void stairOn (int index, CRGB color)
+{
+  int firstSindex = 0;
+  int lastSindex = stair[0] - 1;
+  for (int i = 0; i < index; ++i)
+  {
+    firstSindex += stair[i];
+    lastSindex = firstSindex + stair[i] - 1;
+  }
+  for (int j = firstSindex; j <= lastSindex; ++j)
+    leds[j] = color;
 }
